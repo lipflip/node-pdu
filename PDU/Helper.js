@@ -2,13 +2,13 @@
 
 var PDU     = require('../pdu'),
     sprintf = require('sprintf');
-    
+
 function Helper()
 {
-    
+
 }
 
-Helper._limitNormal   = 140;
+Helper._limitNormal   = 160; //temp fix, initially 140
 Helper._limitCompress = 160;
 Helper._limitUnicode  = 70;
 Helper.ALPHABET_7BIT  = "@£$¥èéùìòÇ\nØø\rÅåΔ_ΦΓΛΩΠΨΣΘΞ\x1bÆæßÉ !\"#¤%&'()*+,-./0123456789:;<=>?¡ABCDEFGHIJKLMNOPQRSTUVWXYZÄÖÑÜ`¿abcdefghijklmnopqrstuvwxyzäöñüà";
@@ -58,7 +58,7 @@ Helper.char = function(order)
 {
     return String.fromCharCode(order);
 };
-    
+
 /**
  * decode message from unicode
  * @param string $text
@@ -71,7 +71,7 @@ Helper.decode16Bit = function(text)
         return Helper.char((buffer[0]<<8) | buffer[1]);
     }).join("");
 };
-    
+
 /**
  * decode message
  * @param string $text
@@ -109,7 +109,7 @@ Helper.decode7Bit = function(text, inLen, alignBits)
         buf >>= alignBits;
         bufLen = 8 - alignBits;
     }
-    
+
     while (true) {
         if(bufLen < 7){
             if(dataPos == data.length)
@@ -129,29 +129,35 @@ Helper.decode7Bit = function(text, inLen, alignBits)
         if(digit % 128 == 27){
             inExt = true;
         } else {
-          var c = Helper.ALPHABET_7BIT.charCodeAt(digit);
-          if (c < 0x80) {
-            ret.push(c);
-          } else if (c < 0x800) {
-            ret.push(0xC0 | (c >> 6), 0x80 | (c & 0x3F));
-          }  else if (
-              ((c & 0xFC00) == 0xD800) && (digit + 1) < Helper.EXTENDED_TABLE.length &&
-              ((Helper.EXTENDED_TABLE.charCodeAt(digit + 1) & 0xFC00) == 0xDC00)) {
-            // Surrogate Pair
-            c = 0x10000 + ((c & 0x03FF) << 10) + (str.charCodeAt(++digit) & 0x03FF);
-            ret.push(
-              0xF0 | (c >> 18),
-              0x80 | ((c >> 12) & 0x3F),
-              0x80 | ((c >> 6) & 0x3F),
-              0x80 | (c & 0x3F)
-            );
-          } else {
-            ret.push(
-              0xE0 | (c >> 12),
-              0x80 | ((c >> 6) & 0x3F),
-              0x80 | (c & 0x3F)
-            );
-          }
+            var c;
+            if(inExt){
+                c = Helper.EXTENDED_TABLE.charCodeAt(digit);
+                inExt = false;
+            } else {
+                c = Helper.ALPHABET_7BIT.charCodeAt(digit);
+            }
+            if (c < 0x80) {
+                ret.push(c);
+            } else if (c < 0x800) {
+                ret.push(0xC0 | (c >> 6), 0x80 | (c & 0x3F));
+            } else if (
+                ((c & 0xFC00) == 0xD800) && (digit + 1) < Helper.EXTENDED_TABLE.length &&
+                ((Helper.EXTENDED_TABLE.charCodeAt(digit + 1) & 0xFC00) == 0xDC00)) {
+                // Surrogate Pair
+                c = 0x10000 + ((c & 0x03FF) << 10) + (text.charCodeAt(++digit) & 0x03FF);
+                ret.push(
+                    0xF0 | (c >> 18),
+                    0x80 | ((c >> 12) & 0x3F),
+                    0x80 | ((c >> 6) & 0x3F),
+                    0x80 | (c & 0x3F)
+                );
+            } else {
+                ret.push(
+                    0xE0 | (c >> 12),
+                    0x80 | ((c >> 6) & 0x3F),
+                    0x80 | (c & 0x3F)
+                );
+            }
         }
 
         /* Do we process all input data */
@@ -164,7 +170,7 @@ Helper.decode7Bit = function(text, inLen, alignBits)
                 break;
         }
     }
-    
+
     return (new Buffer(ret, "binary")).toString();
 };
 
@@ -183,7 +189,7 @@ Helper.encode8Bit = function(text)
         pdu += sprintf("%02X", buffer[i]);
         length++;
     }
-    
+
     return [length, pdu];
 };
 
@@ -231,7 +237,8 @@ Helper.encode7Bit = function(text, alignBits)
     if(bufLen)
         ret += sprintf("%02X", buf);    /* here we have less then 8 bits */
 
-    return [len, ret];
+    //return [len, ret];
+    return [len+1, ret]; //fix missing end char in text after decode or send to modem
 };
 
 /**
@@ -243,16 +250,16 @@ Helper.encode16Bit = function(text)
 {
     var length = 0,
         pdu    = '';
-    
+
     for(var i = 0; i < text.length; i++){
         var byte    = Helper.order(text.substr(i, 1));
-            pdu    += sprintf("%04X", byte);
-            length += 2;
+        pdu    += sprintf("%04X", byte);
+        length += 2;
     }
-    
+
     return [length, pdu];
 };
-    
+
 /**
  * get pdu object by type
  * @return Deliver|Submit|Report
@@ -261,60 +268,60 @@ Helper.encode16Bit = function(text)
 Helper.getPduByType = function()
 {
     var Type = PDU.getModule('PDU/Type');
-    
+
     // parse type of sms
     var type = Type.parse(),
         self = null;
-    
+
     switch(type.getMti()){
         case Type.SMS_DELIVER:
             self = PDU.Deliver();
             break;
-    
+
         case Type.SMS_SUBMIT:
             self = PDU.Submit();
-            
+
             var buffer = new Buffer(PDU.getPduSubstr(2), 'hex');
             // get mr
             self.setMr(buffer[0]);
             break;
-        
+
         case Type.SMS_REPORT:
             self = PDU.Report();
-    
+
             var buffer = new Buffer(PDU.getPduSubstr(2), 'hex');
             // get reference
             self.setReference(buffer[0]);
             break;
-        
+
         default:
             throw new Error("Unknown sms type");
-            
+
     }
-    
+
     // set type
     self.setType(type);
-    
+
     return self;
 };
 
 Helper.initVars = function(pdu)
 {
-    
+
     var SCTS = PDU.getModule('PDU/SCTS'),
         PID  = PDU.getModule('PDU/PID'),
         DCS  = PDU.getModule('PDU/DCS'),
         VP   = PDU.getModule('PDU/VP'),
         Data = PDU.getModule('PDU/Data');
-    
+
     // if is the report status
     if(pdu.getType() instanceof require('./Type/Report')){
         // parse timestamp
         pdu.setDateTime(SCTS.parse());
-        
+
         // parse discharge
         pdu.setDischarge(SCTS.parse());
-        
+
         var buffer = new Buffer(PDU.getPduSubstr(2), 'hex');
         // get status
         pdu.setStatus(buffer[0]);
@@ -341,7 +348,7 @@ Helper.initVars = function(pdu)
         // parse data
         pdu.setData(Data.parse(pdu));
     }
-        
+
     return pdu;
 };
 
